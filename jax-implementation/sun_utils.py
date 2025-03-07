@@ -7,7 +7,7 @@ class SUGenerator:
     def __init__(self, N, module="numpy", dtype=None, device=None):
         self.N = N
         self.module = importlib.import_module("torch" if module == "torch" else f"jax.numpy" if module == "jax" else module)
-        self.matrix_exp_fn = getattr(importlib.import_module("torch.linalg", "matrix_exp")) if module == "torch" \
+        self.matrix_exp_fn = getattr(importlib.import_module("torch.linalg"), "matrix_exp") if module == "torch" \
             else getattr(importlib.import_module("jax.scipy.linalg" if module == "jax" else "scipy.linalg"), "expm")
         self.dtype = dtype
         self.device = device
@@ -18,7 +18,7 @@ class SUGenerator:
         self.generators = self._make_generators(N)
 
         if module == "torch":
-            self.generators = module.from_numpy(self.generators)
+            self.generators = self.module.from_numpy(self.generators)
             if device is not None:
                 self.generators = self.generators.to(device=device)
         if module == "jax":
@@ -27,7 +27,7 @@ class SUGenerator:
         if module != "torch" and device is not None:
             raise ValueError("device can only be used with torch, set to None using numpy or jax.")
         if dtype is not None:
-            if (module == "torch" and not dtype.is_complex) or not self.module.iscomplexobj(dtype(0)):
+            if (module == "torch" and not dtype.is_complex) or (module != "torch" and not self.module.iscomplexobj(dtype(0))):
                 raise TypeError("dtype must be a complex type.")
             self.generators = self._to_dtype(self.generators, dtype)
     
@@ -45,7 +45,10 @@ class SUGenerator:
         return su_N
     
     def _to_dtype(self, arr, dtype):
-        return arr.to(dtype=dtype) if self.module == "torch" else arr.astype(dtype)
+        try:
+            return arr.to(dtype=dtype)
+        except:
+            return arr.astype(dtype)
     
     def generate_group(self, coef):
         su_N = self.generate_algebra(coef)
