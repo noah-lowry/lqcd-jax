@@ -11,3 +11,5 @@ conda activate lattice-qcd
 conda install numpy scipy matplotlib tqdm -y
 pip install -U "jax[cuda12]"
 pip install jax-tqdm
+
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
