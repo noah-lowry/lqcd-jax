@@ -7,11 +7,12 @@ from sun_utils import SUGenerator
 gen = SUGenerator(3, module="jax", dtype=jnp.complex64)
 @jax.jit
 def coef_to_lie_group(coef):
-    su = jnp.einsum("...N,Nij->...ij", coef.astype(jnp.complex64), gen.generators)
+    coef = jax.lax.complex(coef, jnp.zeros_like(coef))
+    su = jnp.einsum("...N,Nij->...ij", coef, gen.generators.astype(coef.dtype))
     SU = jax.scipy.linalg.expm(1j*su)
     return SU
 
-@partial(jax.jit, static_argnames=["beta"])
+@jax.jit
 def wilson_action(field, beta):
     N = field.shape[-1]
 
@@ -33,7 +34,35 @@ def wilson_action(field, beta):
 
     return beta * S
 
-@partial(jax.jit, static_argnames=["beta"])
+# avoids big numbers, therefore reduces floating point errors
+@jax.jit
+def accurate_wilson_hamiltonian_error(q0, p0, q1, p1, beta):
+
+    field0 = coef_to_lie_group(q0)
+    field1 = coef_to_lie_group(q1)
+
+    def plaquette(field, mu, nu):
+        U_mu = field[..., mu, :, :]
+        U_nu = field[..., nu, :, :]
+
+        U_mu_shifted = jnp.roll(U_mu, shift=-1, axis=nu)
+        U_nu_shifted = jnp.roll(U_nu, shift=-1, axis=mu)
+
+        Re_Tr_Plaquettes = jnp.einsum("...AB,...BC,...CD,...DA->...",
+                                    U_mu, U_nu_shifted,
+                                    U_mu_shifted.conj().mT,
+                                    U_nu.conj().mT).real
+
+        return Re_Tr_Plaquettes
+    
+    def plaquette_diff(mu, nu):
+        return (plaquette(field0, mu, nu) - plaquette(field1, mu, nu)) / 3
+    
+    local_hamiltonian_energy_diff = beta * sum(plaquette_diff(mu, nu) for mu in range(4) for nu in range(mu+1, 4)) + jnp.sum((p1 - p0) * ((p1 + p0) / 2), axis=[-1, -2])
+
+    return jnp.sum(local_hamiltonian_energy_diff)
+
+@jax.jit
 def tree_level_improved_action(field, beta):
 
     def P(mu, nu):
