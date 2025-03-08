@@ -1,11 +1,9 @@
-
 #!/bin/sh
 cd ~
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
 sh Miniconda3-latest-Linux-aarch64.sh
-conda init
-exec
-conda install -n base conda-libmamba-solver
+source ~/.bashrc
+conda install -n base conda-libmamba-solver -y
 conda config --set solver libmamba
 
 conda create -n lattice-qcd Python=3.11 ipykernel jupyter pip -y
