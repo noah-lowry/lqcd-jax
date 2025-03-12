@@ -6,7 +6,7 @@ from opt_einsum import contract
 class SUGenerator:
     def __init__(self, N, module="numpy", dtype=None, device=None):
         self.N = N
-        self.module = importlib.import_module("torch" if module == "torch" else f"jax.numpy" if module == "jax" else module)
+        self.module = importlib.import_module("torch" if module == "torch" else "jax.numpy" if module == "jax" else module)
         self.matrix_exp_fn = getattr(importlib.import_module("torch.linalg"), "matrix_exp") if module == "torch" \
             else getattr(importlib.import_module("jax.scipy.linalg" if module == "jax" else "scipy.linalg"), "expm")
         self.dtype = dtype
@@ -47,7 +47,7 @@ class SUGenerator:
     def _to_dtype(self, arr, dtype):
         try:
             return arr.to(dtype=dtype)
-        except:
+        except AttributeError:
             return arr.astype(dtype)
     
     def generate_group(self, coef):
