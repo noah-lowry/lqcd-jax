@@ -156,7 +156,7 @@ def mean_wilson_rectangle(field, R, T, time_unique=True):
 def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
     
     def proj_SU3(arr):
-        D, V = jnp.linalg.eig(arr.conj().mT @ arr)
+        D, V = jnp.linalg.eigh(arr.conj().mT @ arr)
         result = arr @ ((V * (jnp.expand_dims(D, axis=-2)**-0.5)) @ V.conj().mT)
         result = result * (jnp.expand_dims(jnp.linalg.det(result), axis=[-1, -2]) ** (-1/3))
         return result
@@ -180,23 +180,26 @@ def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
         return S_plus + S_minus
     
     def V_bar_mu_nu_rho(original_links, mu, nu, rho, alpha3):
-        vbar = (1 - alpha3) * original_links[..., mu, :, :] + (alpha3 / 2) * \
-            sum(staple_func(original_links[..., mu, :, :], original_links[..., nu, :, :], mu, eta)
-                for eta in range(4) if eta != rho and eta != nu and eta != mu)
+        staples = [staple_func(original_links[..., mu, :, :], original_links[..., eta, :, :], mu, eta)
+                for eta in range(4) if eta != rho and eta != nu and eta != mu]
+        staples = jnp.stack(staples, axis=0).sum(axis=0)
+        vbar = (1 - alpha3) * original_links[..., mu, :, :] + (alpha3 / 2) * staples
         vbar = proj_SU3(vbar)
         return vbar
     
     def V_tilda_mu_nu(original_links, mu, nu, alpha2, alpha3):
-        vtilda = (1 - alpha2) * original_links[..., mu, :, :] + (alpha2 / 4) * \
-            sum(staple_func(V_bar_mu_nu_rho(original_links, rho, nu, mu, alpha3), V_bar_mu_nu_rho(original_links, mu, rho, nu, alpha3), mu, rho)
-                for rho in range(4) if rho != nu and rho != mu)
+        staples = [staple_func(V_bar_mu_nu_rho(original_links, mu, rho, nu, alpha3), V_bar_mu_nu_rho(original_links, rho, nu, mu, alpha3), mu, rho)
+                for rho in range(4) if rho != nu and rho != mu]
+        staples = jnp.stack(staples, axis=0).sum(axis=0)
+        vtilda = (1 - alpha2) * original_links[..., mu, :, :] + (alpha2 / 4) * staples
         vtilda = proj_SU3(vtilda)
         return vtilda
     
     def V_final_mu(original_links, mu, alpha1, alpha2, alpha3):
-        v = (1 - alpha1) * original_links[..., mu, :, :] + (alpha1 / 6) * \
-            sum(staple_func(V_tilda_mu_nu(original_links, nu, mu, alpha2, alpha3), V_tilda_mu_nu(original_links, mu, nu, alpha2, alpha3), mu, nu)
-                for nu in range(4) if nu != mu)
+        staples = [staple_func(V_tilda_mu_nu(original_links, mu, nu, alpha2, alpha3), V_tilda_mu_nu(original_links, nu, mu, alpha2, alpha3), mu, nu)
+                for nu in range(4) if nu != mu]
+        staples = jnp.stack(staples, axis=0).sum(axis=0)
+        v = (1 - alpha1) * original_links[..., mu, :, :] + (alpha1 / 6) * staples
         v = proj_SU3(v)
         return v
 
