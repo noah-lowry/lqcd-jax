@@ -178,25 +178,22 @@ def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
         return S_plus + S_minus
     
     def V_bar_mu_nu_rho(original_links, mu, nu, rho, alpha3):
-        staples = [staple_func(original_links[..., mu, :, :], original_links[..., eta, :, :], mu, eta)
-                for eta in range(4) if eta != rho and eta != nu and eta != mu]
-        staples = jnp.stack(staples, axis=0).sum(axis=0)
+        staples = sum(staple_func(original_links[..., mu, :, :], original_links[..., eta, :, :], mu, eta)
+                for eta in range(4) if eta != rho and eta != nu and eta != mu)
         vbar = (1 - alpha3) * original_links[..., mu, :, :] + (alpha3 / 2) * staples
         vbar = proj_SU3(vbar)
         return vbar
     
     def V_tilda_mu_nu(original_links, mu, nu, alpha2, alpha3):
-        staples = [staple_func(V_bar_mu_nu_rho(original_links, mu, rho, nu, alpha3), V_bar_mu_nu_rho(original_links, rho, nu, mu, alpha3), mu, rho)
-                for rho in range(4) if rho != nu and rho != mu]
-        staples = jnp.stack(staples, axis=0).sum(axis=0)
+        staples = sum(staple_func(V_bar_mu_nu_rho(original_links, mu, rho, nu, alpha3), V_bar_mu_nu_rho(original_links, rho, nu, mu, alpha3), mu, rho)
+                for rho in range(4) if rho != nu and rho != mu)
         vtilda = (1 - alpha2) * original_links[..., mu, :, :] + (alpha2 / 4) * staples
         vtilda = proj_SU3(vtilda)
         return vtilda
     
     def V_final_mu(original_links, mu, alpha1, alpha2, alpha3):
-        staples = [staple_func(V_tilda_mu_nu(original_links, mu, nu, alpha2, alpha3), V_tilda_mu_nu(original_links, nu, mu, alpha2, alpha3), mu, nu)
-                for nu in range(4) if nu != mu]
-        staples = jnp.stack(staples, axis=0).sum(axis=0)
+        staples = sum(staple_func(V_tilda_mu_nu(original_links, mu, nu, alpha2, alpha3), V_tilda_mu_nu(original_links, nu, mu, alpha2, alpha3), mu, nu)
+                for nu in range(4) if nu != mu)
         v = (1 - alpha1) * original_links[..., mu, :, :] + (alpha1 / 6) * staples
         v = proj_SU3(v)
         return v
