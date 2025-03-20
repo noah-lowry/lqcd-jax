@@ -1,4 +1,5 @@
 from functools import partial
+import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -109,48 +110,45 @@ def tree_level_improved_action(field, beta):
 
     return S
 
-def chain_matmul_einsum(arrs, trace_last=True):
-    args = [(arr, [..., i, i+1]) for i, arr in enumerate(arrs)]
-    args = [a for b in args for a in b]
-    if trace_last:
-        args[-1][2] = 0
-        args.append([...])
-    else:
-        args.append([..., 0, len(arrs)])
-
-    result = jnp.einsum(*args)
-
-    return result
-
-@partial(jax.jit, static_argnames=["R", "T", "time_unique"])
-def mean_wilson_rectangle(field, R, T, time_unique=True):
+@partial(jax.jit, static_argnums=(1, 2))
+def wilson_loops_range(field, R, T):
     
-    result = 0
+    def _wilson_lines(field, L, mu):
+        field = field[..., mu, :, :]
 
-    if time_unique:
+        def scan1(carry, i):
+            carry = carry @ jnp.roll(field, shift=-i, axis=mu)
+            return carry, carry
         
-        for spatial_dim in [1, 2, 3]:
+        _, result = jax.lax.scan(
+            scan1,
+            init=jnp.broadcast_to(jnp.eye(3, dtype=field.dtype), field.shape),
+            xs=jnp.arange(L)
+        )
+        return result
 
-            link_list = [jnp.roll(field[:,:,:,:,spatial_dim], shift=-i, axis=spatial_dim) for i in range(R)] + \
-                            [jnp.roll(field[:,:,:,:,0], shift=[-i, -R], axis=[0, spatial_dim]) for i in range(T)] + \
-                            [jnp.roll(field[:,:,:,:,spatial_dim], shift=[-T, -i], axis=[0, spatial_dim]).conj().mT for i in range(R-1, -1, -1)] + \
-                            [jnp.roll(field[:,:,:,:,0], shift=-i, axis=0).conj().mT for i in range(T-1, -1, -1)]
-            
-            result += chain_matmul_einsum(link_list, trace_last=True).mean()
+    def _wilson_looper_fn(lr, lt, Ur, Ut, rdim, tdim):
+        result = jnp.einsum(
+            "...AB,...BC,...CD,...DA->...",
+            Ur[lr],
+            jnp.roll(Ut[lt], shift=-(lr+1), axis=rdim),
+            jnp.roll(Ur[lr], shift=-(lt+1), axis=tdim).conj().mT,
+            Ut[lt].conj().mT
+        )
+        return result
         
-        return result / 3
-    else:
-        
-        for mu, nu in [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]:
-            
-            link_list = [jnp.roll(field[:,:,:,:,nu], shift=-i, axis=nu) for i in range(R)] + \
-                            [jnp.roll(field[:,:,:,:,mu], shift=[-i, -R], axis=[mu, nu]) for i in range(T)] + \
-                            [jnp.roll(field[:,:,:,:,nu], shift=[-T, -i], axis=[mu, nu]).conj().mT for i in range(R-1, -1, -1)] + \
-                            [jnp.roll(field[:,:,:,:,mu], shift=-i, axis=mu).conj().mT for i in range(T-1, -1, -1)]
-            
-            result += chain_matmul_einsum(link_list, trace_last=True).mean()
-        
-        return result / 6
+    def _wilson_loops_mn(field, R, T, spatial_dim, temporal_dim):
+        Ur = _wilson_lines(field, R, spatial_dim)
+        Ut = _wilson_lines(field, T, temporal_dim)
+
+        f_over_lt = jax.vmap(lambda lt, lr: _wilson_looper_fn(lr, lt, Ur, Ut, spatial_dim, temporal_dim).mean(), in_axes=(0, None))
+        v_f = jax.vmap(lambda lr: f_over_lt(jnp.arange(T), lr), in_axes=0)
+
+        return v_f(jnp.arange(R))
+    
+    f_mn = lambda mu, nu: _wilson_loops_mn(field, R, T, mu, nu)
+    result = sum(f_mn(n, m) for m, n in zip(*np.triu_indices(4, k=1))) / 6  # where m is the time dimension
+    return result
 
 @jax.jit
 def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
