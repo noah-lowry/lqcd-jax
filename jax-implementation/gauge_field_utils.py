@@ -4,151 +4,52 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-def _make_generators(N):
-    def _alpha_index(n, m):
-        assert m < n
-        return n*n + 2*(m-n) - 2
+from special_unitary import proj_SU3
 
-    def _beta_index(n, m):
-        assert m < n
-        return n*n + 2*(m-n) - 1
+@partial(jax.jit, static_argnums=(1, 2))
+def _plaquette_mn(U, mu, nu):
+    """Trace real plaquette divided by N everywhere in the mu nu plane"""
+    N = U.shape[-1]
 
-    def _gamma_index(n):
-        return n*n - 2
+    U_mu = U[..., mu, :, :]
+    U_nu = U[..., nu, :, :]
 
-    result = np.empty((N*N-1, N, N), dtype=np.complex128)
-    for m in range(1, N+1):
-        for n in range(m+1, N+1):
-            gen = np.zeros((N, N), dtype=np.complex128)
-            gen[m-1, n-1] = gen[n-1, m-1] = 0.5
-            result[_alpha_index(n, m)] = gen
+    U_mu_shifted = jnp.roll(U_mu, shift=-1, axis=nu)
+    U_nu_shifted = jnp.roll(U_nu, shift=-1, axis=mu)
 
-            gen = np.zeros((N, N), dtype=np.complex128)
-            gen[m-1, n-1] = -0.5j
-            gen[n-1, m-1] = 0.5j
-            result[_beta_index(n, m)] = gen
-
-            gen = np.diag(np.array([1,]*(n-1)+[0,]*(N+1-n), dtype=np.complex128))
-            gen[n-1, n-1] = 1-n
-            gen /= np.sqrt(2*n*(n-1))
-            result[_gamma_index(n)] = gen
-    return result
-
-@partial(jax.jit, static_argnums=(1,))
-def LALG_SU_N(coef, N=3):
-    """Takes as input a float array `coef[..., N^2-1]` and returns complex array `SU[..., N, N]`.
-    The N^2-1 values in `coef` correspond to the coefficients of su(N) generators (e.g. N=3 corresponds to the Gell-Mann matrices divided by 2)\n
-    Lie Algebra to Lie Group Special Unitary N."""
+    Re_Tr_Plaquettes = jnp.einsum("...AB,...BC,...CD,...DA->...",
+                                U_mu, U_nu_shifted,
+                                U_mu_shifted.conj().mT,
+                                U_nu.conj().mT).real
     
-    su = LA_SU_N(coef, N)
-    SU = jax.scipy.linalg.expm(1j*su)
-
-    return SU
-
-@partial(jax.jit, static_argnums=(1,))
-def LA_SU_N(coef, N=3):
-    """Takes as input a float (or real-complex) array `coef[..., N^2-1]` and returns complex array `su[..., N, N]` such that `expm(1j*su)` belongs to SU(N)."""
-    coef = coef if jnp.iscomplexobj(coef) else jax.lax.complex(coef, jnp.zeros_like(coef))
-    generators = _make_generators(N)
-    
-    su = jnp.einsum("...N,Nij->...ij", coef, generators)
-
-    return su
+    return Re_Tr_Plaquettes / N
 
 @jax.jit
-def proj_SU3(arr):
-    D, V = jnp.linalg.eigh(arr.conj().mT @ arr)
-    result = arr @ ((V * (jnp.expand_dims(D, axis=-2)**-0.5)) @ V.conj().mT)
-    result = result * (jnp.expand_dims(jnp.linalg.det(result), axis=[-1, -2]) ** (-1/3))
-    return result
-
-@partial(jax.jit, static_argnums=(1,))
-def unitary_violation(arr, aggregate="mean"):
-    """Measure of how much `arr` violates unitarity. Computes |U^H @ U - I|, where || is the Frobenius norm.\n
-    `aggregate`: `None, "mean", "max", "rms"`
-    """
-
-    I = np.broadcast_to(np.eye(arr.shape[-1], dtype=arr.dtype), arr.shape)
-
-    violation = jnp.linalg.matrix_norm(arr.conj().mT @ arr - I, ord="fro")
-
-    aggregate_fn = {
-        None: lambda x: x,
-        "mean": jnp.mean,
-        "max": jnp.max,
-        "rms": lambda x: jnp.sqrt(jnp.mean(jnp.square(x)))
-    }
-    
-    return aggregate_fn[aggregate](violation)
-
-@jax.jit
-def wilson_action(field, beta):
-    N = field.shape[-1]
-
-    def plaquette(mu, nu):
-        U_mu = field[..., mu, :, :]
-        U_nu = field[..., nu, :, :]
-
-        U_mu_shifted = jnp.roll(U_mu, shift=-1, axis=nu)
-        U_nu_shifted = jnp.roll(U_nu, shift=-1, axis=mu)
-
-        Re_Tr_Plaquettes = jnp.einsum("...AB,...BC,...CD,...DA->...",
-                                    U_mu, U_nu_shifted,
-                                    U_mu_shifted.conj().mT,
-                                    U_nu.conj().mT).real
-        
-        return 1 - Re_Tr_Plaquettes / N
-    
-    S = sum(jnp.sum(plaquette(mu, nu)) for mu in range(4) for nu in range(mu+1, 4))
-
+def wilson_action(links, beta):
+    S = sum(jnp.sum(1 - _plaquette_mn(links, mu, nu)) for mu in range(4) for nu in range(mu+1, 4))
     return beta * S
 
 # avoids big numbers, therefore reduces floating point errors
 @jax.jit
 def accurate_wilson_hamiltonian_error(q0, p0, q1, p1, beta):
 
-    field0 = LALG_SU_N(q0)
-    field1 = LALG_SU_N(q1)
-
-    def plaquette(field, mu, nu):
-        U_mu = field[..., mu, :, :]
-        U_nu = field[..., nu, :, :]
-
-        U_mu_shifted = jnp.roll(U_mu, shift=-1, axis=nu)
-        U_nu_shifted = jnp.roll(U_nu, shift=-1, axis=mu)
-
-        Re_Tr_Plaquettes = jnp.einsum("...AB,...BC,...CD,...DA->...",
-                                    U_mu, U_nu_shifted,
-                                    U_mu_shifted.conj().mT,
-                                    U_nu.conj().mT).real
-
-        return Re_Tr_Plaquettes
-    
-    def plaquette_diff(mu, nu):
-        return (plaquette(field0, mu, nu) - plaquette(field1, mu, nu)) / 3
-    
-    local_hamiltonian_energy_diff = beta * sum(plaquette_diff(mu, nu) for mu in range(4) for nu in range(mu+1, 4)) + jnp.sum((p1 - p0) * ((p1 + p0) / 2), axis=[-1, -2])
+    local_hamiltonian_energy_diff = beta * sum(
+        _plaquette_mn(q0, mu, nu) - _plaquette_mn(q1, mu, nu)
+        for mu in range(4)
+        for nu in range(mu + 1, 4)
+    ) + jnp.sum((p1 - p0) * ((p1 + p0) / 2), axis=[-1, -2])
 
     return jnp.sum(local_hamiltonian_energy_diff)
 
-@jax.jit
-def tree_level_improved_action(field, beta):
+@partial(jax.jit, static_argnames=("u0",))
+def luscher_weisz_action(links, beta, u0=None):
+    """`beta` is the canonical beta. `beta_LW` is computed as `u0^-4 * beta * c_pl`. If `u0` is not provided, it is calculated from the configuration."""
 
-    def P(mu, nu):
-        U_mu = field[..., mu, :, :]
-        U_nu = field[..., nu, :, :]
-
-        P = jnp.einsum("...AB,...BC,...CD,...DA->...",
-                                    U_mu,
-                                    jnp.roll(U_nu, shift=-1, axis=mu),
-                                    jnp.roll(U_mu, shift=-1, axis=nu).conj().mT,
-                                    U_nu.conj().mT).real
+    def _rect_mn(U, mu, nu):
+        N = U.shape[-1]
         
-        return P
-    
-    def R(mu, nu):
-        U_mu = field[..., mu, :, :]
-        U_nu = field[..., nu, :, :]
+        U_mu = U[..., mu, :, :]
+        U_nu = U[..., nu, :, :]
 
         R1 = jnp.einsum("...AB,...BC,...CD,...DE,...EF,...FA->...",
                                     U_mu,
@@ -166,17 +67,48 @@ def tree_level_improved_action(field, beta):
                                     jnp.roll(U_mu, shift=-1, axis=nu).conj().mT,
                                     U_nu.conj().mT).real
         
-        return R1 + R2
+        return (R1 + R2) / N
     
-    u0_sqr = jnp.power(jnp.array([P(mu, nu) for mu in range(4) for nu in range(4) if mu != nu]).mean() / 3, 1/2)
-    jax.debug.print("u0^2 = {u}", u=u0_sqr)
+    def _pgram_mn(U, mu, nu, rho):
+        N = U.shape[-1]
 
-    S = sum(
-        (5*beta) * (1 - P(mu, nu).sum() / 3) - (beta/(4*u0_sqr)) * (1 - R(mu, nu).sum() / 3)
-        for mu in range(4) for nu in range(mu+1, 4)
+        U_mu = U[..., mu, :, :]
+        U_nu = U[..., nu, :, :]
+        U_rho = U[..., rho, :, :]
+
+        PG = jnp.einsum(
+            "...AB,...BC,...CD,...DE,...EF,...FA->...",
+            U_mu,
+            jnp.roll(U_rho, shift=-1, axis=mu),
+            jnp.roll(U_nu, shift=[-1, -1], axis=[mu, rho]),
+            jnp.roll(U_mu, shift=[-1, -1], axis=[nu, rho]).conj().mT,
+            jnp.roll(U_rho, shift=-1, axis=nu).conj().mT,
+            U_nu.conj().mT
+        ).real
+        
+        return PG / N
+
+    plaq = jnp.stack([_plaquette_mn(links, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0)
+    rect = jnp.stack([_rect_mn(links, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0)
+    pgram = jnp.stack([_pgram_mn(links, mu, nu, rho) for mu in range(4) for nu in range(mu+1, 4) for rho in range(nu+1, 4)], axis=0)
+
+    u0 = jax.lax.cond(
+        u0 is None,
+        lambda: plaq.mean() ** 0.25,
+        lambda: u0
     )
 
-    return S
+    alpha_s = -1.303615*jnp.log(u0)
+    c_pl = 5/3 + (4*np.pi*alpha_s) * 0.2370
+    beta_LW = beta * c_pl / (u0 ** 4)
+    
+    S_local = beta_LW * (
+        (1 - plaq).sum(axis=0) \
+        - ((1 + 0.4805*alpha_s) / (20 * u0**2)) * (1 - rect).sum(axis=0) \
+        - (0.03325*alpha_s / (u0**2)) * (1 - pgram).sum(axis=0)
+    )
+    
+    return jnp.sum(S_local)
 
 @partial(jax.jit, static_argnums=(1, 2))
 def wilson_loops_range(field, R, T):
@@ -215,10 +147,10 @@ def wilson_loops_range(field, R, T):
         return v_f(jnp.arange(R))
     
     f_mn = lambda mu, nu: _wilson_loops_mn(field, R, T, mu, nu)
-    result = sum(f_mn(n, m) for m, n in zip(*np.triu_indices(4, k=1))) / 6  # where m is the time dimension
+    result = sum(f_mn(n, m) for m, n in [(0, 1), (0, 2), (0, 3)]) / 3  # where m is the time dimension
     return result
 
-    
+
 @jax.jit
 def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
 
@@ -264,3 +196,47 @@ def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
     U_HYP = jnp.stack([V_final_mu(field, mu, alpha1, alpha2, alpha3) for mu in range(4)], axis=-3)
 
     return U_HYP
+
+@partial(jax.jit, static_argnums=(1, 2, 3))
+def smear_stout(links, n=10, rho=0.1, temporal=True):
+
+    N = links.shape[-1]
+    
+    rho_matrix = np.full(shape=(4, 4), fill_value=rho)
+    if not temporal:
+        rho_matrix[:, 0] = 0
+        rho_matrix[0, :] = 0
+
+    def _staples_mn(U, mu, nu):
+        U_mu = U[..., mu, :, :]
+        U_nu = U[..., nu, :, :]
+
+        S_plus = jnp.einsum(
+            "...ij,...jk,...kl->...il",
+            U_nu,
+            jnp.roll(U_mu, shift=-1, axis=nu),
+            jnp.roll(U_nu, shift=-1, axis=mu).conj().mT
+        )
+        
+        S_minus = jnp.einsum(
+            "...ij,...jk,...kl->...il",
+            jnp.roll(U_nu, shift=1, axis=nu).conj().mT,
+            jnp.roll(U_mu, shift=1, axis=nu),
+            jnp.roll(U_mu, shift=[1, -1], axis=[nu, mu])
+        )
+
+        return S_plus + S_minus
+    
+    def kernel(_, U):
+        staples = jnp.stack([sum(rho_matrix[mu, nu] * _staples_mn(U, mu, nu) for nu in range(4) if nu != mu) for mu in range(4)], axis=-3)
+
+        Omega = staples @ U.conj().mT
+        O = Omega.conj().mT - Omega
+        Q = 0.5j * O - 0.5j * (jnp.trace(O, axis1=-2, axis2=-1)[..., None, None] * np.eye(3)) / N
+
+        result = jax.scipy.linalg.expm(1j*Q) @ U
+        return result
+    
+    result = jax.lax.fori_loop(0, n, kernel, links)
+
+    return result

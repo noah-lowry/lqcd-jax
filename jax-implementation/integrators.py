@@ -1,8 +1,11 @@
-import jax
-from gauge_field_utils import LALG_SU_N
+from functools import partial
 
-def int_MN4_takaishi_forcrand(q0, p0, F_func, tau, nfev_approx, theta=0.08398315262876693, rho=0.2539785108410595, lambd=0.6822365335719091, mu=-0.03230286765269967):
-    eps = tau / (nfev_approx // 5)
+import jax
+from special_unitary import LALG_SU_N
+
+@partial(jax.jit, static_argnums=(2, 4))
+def int_MN4_takaishi_forcrand(q0, p0, F_func, tau, steps_md, theta=0.08398315262876693, rho=0.2539785108410595, lambd=0.6822365335719091, mu=-0.03230286765269967):
+    eps = tau / steps_md
 
     def scan_fn(carry, _):
         T_operator = lambda q, p, coef: LALG_SU_N(coef * p) @ q
@@ -25,13 +28,14 @@ def int_MN4_takaishi_forcrand(q0, p0, F_func, tau, nfev_approx, theta=0.08398315
     (qt, pt), _ = jax.lax.scan(
         f=scan_fn,
         init=(q0, p0),
-        length=nfev_approx//5
+        length=steps_md
     )
         
     return qt, pt
 
-def int_MN2_omelyan(q0, p0, F_func, tau, nfev_approx, lambd=0.1931833275037836):
-    eps = tau / (nfev_approx // 2)
+@partial(jax.jit, static_argnums=(2, 4))
+def int_MN2_omelyan(q0, p0, F_func, tau, steps_md, lambd=0.1931833275037836):
+    eps = tau / steps_md
 
     def scan_fn(carry, _):
         T_operator = lambda q, p, coef: LALG_SU_N(coef * p) @ q
@@ -48,14 +52,14 @@ def int_MN2_omelyan(q0, p0, F_func, tau, nfev_approx, lambd=0.1931833275037836):
     (qt, pt), _ = jax.lax.scan(
         f=scan_fn,
         init=(q0, p0),
-        length=nfev_approx//2
+        length=steps_md
     )
 
     return qt, pt
 
-def int_LF2(q0, p0, F_func, tau, nfev_approx):
-    eps = tau / nfev_approx
-
+@partial(jax.jit, static_argnums=(2, 4))
+def int_LF2(q0, p0, F_func, tau, steps_md):
+    eps = tau / steps_md
 
     def scan_fn(carry, _):
         T_operator = lambda q, p, coef: LALG_SU_N(coef * p) @ q
@@ -69,7 +73,7 @@ def int_LF2(q0, p0, F_func, tau, nfev_approx):
     (qt, pt), _ = jax.lax.scan(
         f=scan_fn,
         init=(q0, p0),
-        length=nfev_approx
+        length=steps_md
     )
 
     return qt, pt
