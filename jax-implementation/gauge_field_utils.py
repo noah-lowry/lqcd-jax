@@ -4,7 +4,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from special_unitary import proj_SU3
+from special_unitary import proj_SU3, expi_H3_util
 
 @partial(jax.jit, static_argnums=(1, 2))
 def _plaquette_mn(U, mu, nu):
@@ -233,7 +233,7 @@ def smear_stout(links, n=10, rho=0.1, temporal=False):
         O = Omega.conj().mT - Omega
         Q = 0.5j * O - 0.5j * (jnp.trace(O, axis1=-2, axis2=-1)[..., None, None] * np.eye(3)) / N
 
-        result = jax.scipy.linalg.expm(1j*Q) @ U
+        result = expi_H3_util(Q) @ U
         return result
     
     result = jax.lax.fori_loop(0, n, kernel, links)
