@@ -150,7 +150,6 @@ def wilson_loops_range(field, R, T):
     result = sum(f_mn(n, m) for m, n in [(0, 1), (0, 2), (0, 3)]) / 3  # where m is the time dimension
     return result
 
-
 @jax.jit
 def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
 
@@ -198,7 +197,7 @@ def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
     return U_HYP
 
 @partial(jax.jit, static_argnums=(1, 2, 3))
-def smear_stout(links, n=10, rho=0.1, temporal=True):
+def smear_stout(links, n=10, rho=0.1, temporal=False):
 
     N = links.shape[-1]
     
