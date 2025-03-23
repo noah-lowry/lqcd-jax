@@ -26,6 +26,51 @@ def LA_SU_N(coef, N=3):
 
     return su
 
+@partial(jax.jit, static_argnums=(1,))
+def fast_expi_H3(Q, precision=jax.lax.Precision.HIGHEST):
+    """Computes `exp(iQ)` where `Q` is 3x3 traceless Hermetian.\n
+    Note: `precision=DEFAULT` is really really bad (err > 1e-5)."""
+    Q__2 = jnp.matmul(Q, Q, precision=precision)
+
+    c0 = jnp.einsum("...AB,...BA->...", Q__2, Q, precision=precision).real / 3
+    c1_3 = jnp.trace(Q__2, axis1=-2, axis2=-1).real / 6
+    c0_max = jax.lax.pow(c1_3, 1.5) * 2
+
+    theta = jax.lax.acos(
+        jax.lax.select(
+            jnp.isclose(c0_max, 0), jnp.ones_like(c0_max), jax.lax.abs(c0) / c0_max
+        )  # Tr(Q^2) == 0 -> Tr(Q^3) == 0 (additionally, Tr(Q^2) == 0 -> Q == 0)
+    )
+    u__2 = c1_3 * jax.lax.cos(theta / 3)**2
+    w__2 = (c1_3 - u__2) * 3
+
+    u = jax.lax.sqrt(u__2)
+    w = jax.lax.sqrt(w__2)
+
+    cos_w = jax.lax.cos(w)
+    sinc_w = jnp.sinc(w / jnp.pi)
+    exp_miu = jax.lax.exp(-1j*u)
+    exp_2iu = 1 / (exp_miu * exp_miu)
+
+    h0 = (u__2 - w__2) * exp_2iu + exp_miu * (8*u__2*cos_w + 2j*u*(3*u__2 + w__2)*sinc_w)
+    h1 = 2*u*exp_2iu - exp_miu * (2*u*cos_w - 1j*(3*u__2 - w__2)*sinc_w)
+    h2 = exp_2iu - exp_miu * (cos_w + 3j*u*sinc_w)
+
+    dd = 9*u__2 - w__2
+
+    f0 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h0), h0 / dd)
+    f1 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h1), h1 / dd)
+    f2 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h2), h2 / dd)
+
+    f0 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f0), f0)
+    f1 = jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)
+    f2 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)
+
+    I = jnp.broadcast_to(jnp.eye(3), Q.shape)
+    result = f0[..., None, None]*I + f1[..., None, None]*Q + f2[..., None, None]*Q__2
+
+    return result
+
 @jax.jit
 def proj_SU3(arr):
     D, V = jnp.linalg.eigh(arr.conj().mT @ arr)
