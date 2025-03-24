@@ -92,17 +92,11 @@ def luscher_weisz_action(links, beta, u0=None):
     rect = jnp.stack([_rect_mn(links, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0)
     pgram = jnp.stack([_pgram_mn(links, mu, nu, rho) for mu in range(4) for nu in range(mu+1, 4) for rho in range(nu+1, 4)], axis=0)
 
-    u0 = jax.lax.cond(
-        u0 is None,
-        lambda: plaq.mean() ** 0.25,
-        lambda: u0
-    )
+    u0 = plaq.mean() ** 0.25 if u0 is None else u0
 
     alpha_s = -1.303615*jnp.log(u0)
-    c_pl = 5/3 + (4*np.pi*alpha_s) * 0.2370
-    beta_LW = beta * c_pl / (u0 ** 4)
     
-    S_local = beta_LW * (
+    S_local = beta * (
         (1 - plaq).sum(axis=0) \
         - ((1 + 0.4805*alpha_s) / (20 * u0**2)) * (1 - rect).sum(axis=0) \
         - (0.03325*alpha_s / (u0**2)) * (1 - pgram).sum(axis=0)

@@ -5,17 +5,6 @@ import jax
 import jax.numpy as jnp
 
 @partial(jax.jit, static_argnums=(1,))
-def LALG_SU_N(coef, N=3):
-    """Takes as input a float array `coef[..., N^2-1]` and returns complex array `SU[..., N, N]`.
-    The N^2-1 values in `coef` correspond to the coefficients of su(N) generators (e.g. N=3 corresponds to the Gell-Mann matrices divided by 2)\n
-    Lie Algebra to Lie Group Special Unitary N."""
-    
-    su = _LA_SU_N(coef, N)
-    SU = jax.scipy.linalg.expm(1j*su)
-
-    return SU
-
-@partial(jax.jit, static_argnums=(1,))
 def _LA_SU_N(coef, N=3):
     """Takes as input a float (or real-complex) array `coef[..., N^2-1]` and returns complex array `su[..., N, N]` such that `expm(1j*su)` belongs to SU(N)."""
     coef = jax.lax.complex(coef.real, jnp.zeros_like(coef.real))
