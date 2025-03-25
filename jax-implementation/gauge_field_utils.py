@@ -26,49 +26,6 @@ def wilson_gauge_error(q0, p0, q1, p1, beta):
 def luscher_weisz_action(links, beta, u0):
     """`beta` is beta_LW (aka beta_pl)"""
 
-    def _rect_mn(U, mu, nu):
-        N = U.shape[-1]
-        
-        U_mu = U[..., mu, :, :]
-        U_nu = U[..., nu, :, :]
-
-        R1 = jnp.einsum("...AB,...BC,...CD,...DE,...EF,...FA->...",
-                                    U_mu,
-                                    jnp.roll(U_nu, shift=-1, axis=mu),
-                                    jnp.roll(U_nu, shift=[-1, -1], axis=[mu, nu]),
-                                    jnp.roll(U_mu, shift=-2, axis=nu).conj().mT,
-                                    jnp.roll(U_nu, shift=-1, axis=nu).conj().mT,
-                                    U_nu.conj().mT).real
-        
-        R2 = jnp.einsum("...AB,...BC,...CD,...DE,...EF,...FA->...",
-                                    U_mu,
-                                    jnp.roll(U_mu, shift=-1, axis=mu),
-                                    jnp.roll(U_nu, shift=-2, axis=mu),
-                                    jnp.roll(U_mu, shift=[-1, -1], axis=[mu, nu]).conj().mT,
-                                    jnp.roll(U_mu, shift=-1, axis=nu).conj().mT,
-                                    U_nu.conj().mT).real
-        
-        return (R1 + R2) / N
-    
-    def _pgram_mn(U, mu, nu, rho):
-        N = U.shape[-1]
-
-        U_mu = U[..., mu, :, :]
-        U_nu = U[..., nu, :, :]
-        U_rho = U[..., rho, :, :]
-
-        PG = jnp.einsum(
-            "...AB,...BC,...CD,...DE,...EF,...FA->...",
-            U_mu,
-            jnp.roll(U_rho, shift=-1, axis=mu),
-            jnp.roll(U_nu, shift=[-1, -1], axis=[mu, rho]),
-            jnp.roll(U_mu, shift=[-1, -1], axis=[nu, rho]).conj().mT,
-            jnp.roll(U_rho, shift=-1, axis=nu).conj().mT,
-            U_nu.conj().mT
-        ).real
-        
-        return PG / N
-
     plaq = jnp.stack([_plaquette_mn(links, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0)
     rect = jnp.stack([_rect_mn(links, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0)
     pgram = jnp.stack([_pgram_mn(links, mu, nu, rho) for mu in range(4) for nu in range(mu+1, 4) for rho in range(nu+1, 4)], axis=0)
@@ -232,6 +189,14 @@ def smear_stout(links, n=10, rho=0.1, temporal=False):
 
     return result
 
+@jax.jit
+def mean_plaquette(links):
+    N = links.shape[-1]
+    return jnp.stack([
+        N*_plaquette_mn(links, mu, nu)
+        for mu in range(4) for nu in range(mu+1, 4)
+    ]).mean()
+
 @partial(jax.jit, static_argnums=(1, 2))
 def _plaquette_mn(U, mu, nu):
     """Trace real plaquette divided by N everywhere in the mu nu plane"""
@@ -283,7 +248,7 @@ def _pgram_mn(U, mu, nu, rho):
     U_nu = U[..., nu, :, :]
     U_rho = U[..., rho, :, :]
 
-    PG = jnp.einsum(
+    PG1 = jnp.einsum(
         "...AB,...BC,...CD,...DE,...EF,...FA->...",
         U_mu,
         jnp.roll(U_rho, shift=-1, axis=mu),
@@ -292,5 +257,35 @@ def _pgram_mn(U, mu, nu, rho):
         jnp.roll(U_rho, shift=-1, axis=nu).conj().mT,
         U_nu.conj().mT
     ).real
+
+    PG2 = jnp.einsum(
+        "...AB,...BC,...CD,...DE,...EF,...FA->...",
+        U_mu,
+        jnp.roll(U_nu, shift=-1, axis=mu),
+        jnp.roll(U_rho, shift=[-1, -1], axis=[mu, nu]),
+        jnp.roll(U_mu, shift=[-1, -1], axis=[nu, rho]).conj().mT,
+        jnp.roll(U_nu, shift=-1, axis=rho).conj().mT,
+        U_rho.conj().mT
+    ).real
     
-    return PG / N
+    PG3 = jnp.einsum(
+        "...AB,...BC,...CD,...DE,...EF,...FA->...",
+        U_nu,
+        jnp.roll(U_mu, shift=-1, axis=nu),
+        jnp.roll(U_rho, shift=[-1, -1], axis=[mu, nu]),
+        jnp.roll(U_nu, shift=[-1, -1], axis=[mu, rho]).conj().mT,
+        jnp.roll(U_mu, shift=-1, axis=rho).conj().mT,
+        U_rho.conj().mT
+    ).real
+
+    PG4 = jnp.einsum(
+        "...AB,...BC,...CD,...DE,...EF,...FA->...",
+        jnp.roll(U_mu, shift=-1, axis=nu),
+        jnp.roll(U_nu, shift=-1, axis=mu).conj().mT,
+        jnp.roll(U_rho, shift=-1, axis=mu),
+        jnp.roll(U_mu, shift=-1, axis=rho).conj().mT,
+        jnp.roll(U_nu, shift=-1, axis=rho),
+        jnp.roll(U_rho, shift=-1, axis=nu).conj().mT
+    ).real
+    
+    return (PG1 + PG2 + PG3 + PG4) / N
