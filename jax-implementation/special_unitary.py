@@ -38,11 +38,13 @@ def unitary_violation(arr, aggregate="mean"):
     
     return aggregate_fn[aggregate](violation)
 
-def special_unitary_grad(func):
+def special_unitary_grad(func, N=3):
     """Makes the gradient function for a function fn acting on SU(N) elements.\n
     The gradient function returns coefficients for the su(N) generators.
     """
-    return jax.jit(lambda U, *args, **kwargs: jax.grad(lambda w: func(fast_expi_su3(w) @ U, *args, **kwargs))(jnp.zeros((*U.shape[:-2], U.shape[-1]*U.shape[-1]-1))))
+    gradient = jax.grad(func)
+    gmm_part = 1j*_make_generators(N).conj().mT
+    return jax.jit(lambda U, *args, **kwargs: jnp.einsum("...ij,nik,...kj->...n", gradient(U, *args, **kwargs), gmm_part, U).real)
 
 @jax.custom_jvp
 @jax.jit
