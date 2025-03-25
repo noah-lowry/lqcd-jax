@@ -6,32 +6,13 @@ import jax.numpy as jnp
 
 from special_unitary import proj_SU3, expi_H3_util
 
-@partial(jax.jit, static_argnums=(1, 2))
-def _plaquette_mn(U, mu, nu):
-    """Trace real plaquette divided by N everywhere in the mu nu plane"""
-    N = U.shape[-1]
-
-    U_mu = U[..., mu, :, :]
-    U_nu = U[..., nu, :, :]
-
-    U_mu_shifted = jnp.roll(U_mu, shift=-1, axis=nu)
-    U_nu_shifted = jnp.roll(U_nu, shift=-1, axis=mu)
-
-    Re_Tr_Plaquettes = jnp.einsum("...AB,...BC,...CD,...DA->...",
-                                U_mu, U_nu_shifted,
-                                U_mu_shifted.conj().mT,
-                                U_nu.conj().mT).real
-    
-    return Re_Tr_Plaquettes / N
-
-@jax.jit
+@partial(jax.jit, static_argnums=(1,))
 def wilson_action(links, beta):
     S = sum(jnp.sum(1 - _plaquette_mn(links, mu, nu)) for mu in range(4) for nu in range(mu+1, 4))
     return beta * S
 
-# avoids big numbers, therefore reduces floating point errors
-@jax.jit
-def accurate_wilson_hamiltonian_error(q0, p0, q1, p1, beta):
+@partial(jax.jit, static_argnums=(4,))
+def wilson_gauge_error(q0, p0, q1, p1, beta):
 
     local_hamiltonian_energy_diff = beta * sum(
         _plaquette_mn(q0, mu, nu) - _plaquette_mn(q1, mu, nu)
@@ -41,9 +22,9 @@ def accurate_wilson_hamiltonian_error(q0, p0, q1, p1, beta):
 
     return jnp.sum(local_hamiltonian_energy_diff)
 
-@partial(jax.jit, static_argnames=("u0",))
-def luscher_weisz_action(links, beta, u0=None):
-    """`beta` is the canonical beta. `beta_LW` is computed as `u0^-4 * beta * c_pl`. If `u0` is not provided, it is calculated from the configuration."""
+@partial(jax.jit, static_argnums=(1, 2))
+def luscher_weisz_action(links, beta, u0):
+    """`beta` is beta_LW (aka beta_pl)"""
 
     def _rect_mn(U, mu, nu):
         N = U.shape[-1]
@@ -92,8 +73,6 @@ def luscher_weisz_action(links, beta, u0=None):
     rect = jnp.stack([_rect_mn(links, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0)
     pgram = jnp.stack([_pgram_mn(links, mu, nu, rho) for mu in range(4) for nu in range(mu+1, 4) for rho in range(nu+1, 4)], axis=0)
 
-    u0 = plaq.mean() ** 0.25 if u0 is None else u0
-
     alpha_s = -1.303615*jnp.log(u0)
     
     S_local = beta * (
@@ -103,6 +82,25 @@ def luscher_weisz_action(links, beta, u0=None):
     )
     
     return jnp.sum(S_local)
+
+@partial(jax.jit, static_argnums=(4, 5))
+def luscher_weisz_gauge_error(q0, p0, q1, p1, beta, u0):
+    
+    plaq = jnp.stack([_plaquette_mn(q1, mu, nu)-_plaquette_mn(q0, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0).sum(axis=0)
+    rect = jnp.stack([_rect_mn(q1, mu, nu)-_rect_mn(q0, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], axis=0).sum(axis=0)
+    pgram = jnp.stack([_pgram_mn(q1, mu, nu, rho)-_pgram_mn(q0, mu, nu, rho) for mu in range(4) for nu in range(mu+1, 4) for rho in range(nu+1, 4)], axis=0).sum(axis=0)
+
+    alpha_s = -1.303615*jnp.log(u0)
+
+    S_local = beta * (
+        -plaq \
+        + ((1 + 0.4805*alpha_s) / (20 * u0**2)) * rect \
+        + (0.03325*alpha_s / (u0**2)) * pgram
+    )
+
+    change_local = S_local + jnp.multiply(p1 - p0, (p1 + p0) / 2).sum(axis=(-2, -1))
+
+    return jnp.sum(change_local)
 
 @partial(jax.jit, static_argnums=(1, 2))
 def wilson_loops_range(field, R, T):
@@ -144,7 +142,7 @@ def wilson_loops_range(field, R, T):
     result = sum(f_mn(n, m) for m, n in [(0, 1), (0, 2), (0, 3)]) / 3  # where m is the time dimension
     return result
 
-@jax.jit
+@partial(jax.jit, static_argnums=(1, 2, 3))
 def smear_HYP(field, alpha1=0.75, alpha2=0.6, alpha3=0.3):
 
     def staple_func(f1, f2, d1, d2):
@@ -233,3 +231,66 @@ def smear_stout(links, n=10, rho=0.1, temporal=False):
     result = jax.lax.fori_loop(0, n, kernel, links)
 
     return result
+
+@partial(jax.jit, static_argnums=(1, 2))
+def _plaquette_mn(U, mu, nu):
+    """Trace real plaquette divided by N everywhere in the mu nu plane"""
+    N = U.shape[-1]
+
+    U_mu = U[..., mu, :, :]
+    U_nu = U[..., nu, :, :]
+
+    U_mu_shifted = jnp.roll(U_mu, shift=-1, axis=nu)
+    U_nu_shifted = jnp.roll(U_nu, shift=-1, axis=mu)
+
+    Re_Tr_Plaquettes = jnp.einsum("...AB,...BC,...CD,...DA->...",
+                                U_mu, U_nu_shifted,
+                                U_mu_shifted.conj().mT,
+                                U_nu.conj().mT).real
+    
+    return Re_Tr_Plaquettes / N
+
+@partial(jax.jit, static_argnums=(1, 2))
+def _rect_mn(U, mu, nu):
+    N = U.shape[-1]
+    
+    U_mu = U[..., mu, :, :]
+    U_nu = U[..., nu, :, :]
+
+    R1 = jnp.einsum("...AB,...BC,...CD,...DE,...EF,...FA->...",
+                                U_mu,
+                                jnp.roll(U_nu, shift=-1, axis=mu),
+                                jnp.roll(U_nu, shift=[-1, -1], axis=[mu, nu]),
+                                jnp.roll(U_mu, shift=-2, axis=nu).conj().mT,
+                                jnp.roll(U_nu, shift=-1, axis=nu).conj().mT,
+                                U_nu.conj().mT).real
+    
+    R2 = jnp.einsum("...AB,...BC,...CD,...DE,...EF,...FA->...",
+                                U_mu,
+                                jnp.roll(U_mu, shift=-1, axis=mu),
+                                jnp.roll(U_nu, shift=-2, axis=mu),
+                                jnp.roll(U_mu, shift=[-1, -1], axis=[mu, nu]).conj().mT,
+                                jnp.roll(U_mu, shift=-1, axis=nu).conj().mT,
+                                U_nu.conj().mT).real
+    
+    return (R1 + R2) / N
+
+@partial(jax.jit, static_argnums=(1, 2, 3))
+def _pgram_mn(U, mu, nu, rho):
+    N = U.shape[-1]
+
+    U_mu = U[..., mu, :, :]
+    U_nu = U[..., nu, :, :]
+    U_rho = U[..., rho, :, :]
+
+    PG = jnp.einsum(
+        "...AB,...BC,...CD,...DE,...EF,...FA->...",
+        U_mu,
+        jnp.roll(U_rho, shift=-1, axis=mu),
+        jnp.roll(U_nu, shift=[-1, -1], axis=[mu, rho]),
+        jnp.roll(U_mu, shift=[-1, -1], axis=[nu, rho]).conj().mT,
+        jnp.roll(U_rho, shift=-1, axis=nu).conj().mT,
+        U_nu.conj().mT
+    ).real
+    
+    return PG / N

@@ -52,11 +52,11 @@ def fast_expi_su3(q):
 
     gmm = _make_generators(3)
     q = jax.lax.complex(q.real, jnp.zeros_like(q.real))
-    Q = jnp.einsum("...N,Nij->...ij", q, gmm, precision=jax.lax.Precision.HIGHEST)
+    Q = jnp.einsum("...N,Nij->...ij", q, gmm)
 
-    Q__2 = jnp.matmul(Q, Q, precision=jax.lax.Precision.HIGHEST)
+    Q__2 = jnp.matmul(Q, Q)
 
-    c0 = jnp.einsum("...AB,...BA->...", Q__2, Q, precision=jax.lax.Precision.HIGHEST).real / 3
+    c0 = jnp.einsum("...AB,...BA->...", Q__2, Q).real / 3
     c1_3 = jnp.trace(Q__2, axis1=-2, axis2=-1).real / 6
     c0_max = jax.lax.pow(c1_3, 1.5) * 2
 
@@ -106,8 +106,8 @@ def _fast_expi_su3_frechet(q, t):
     Q = jnp.einsum("...N,Nij->...ij", q, gmm)
     T = jnp.einsum("...N,Nij->...ij", t, gmm)
 
-    Q__2 = jnp.matmul(Q, Q, precision=jax.lax.Precision.HIGHEST)
-    c0 = jnp.einsum("...AB,...BA->...", Q__2, Q, precision=jax.lax.Precision.HIGHEST).real / 3
+    Q__2 = jnp.matmul(Q, Q)
+    c0 = jnp.einsum("...AB,...BA->...", Q__2, Q).real / 3
     c1_3 = jnp.trace(Q__2, axis1=-2, axis2=-1).real / 6
     c0_max = jax.lax.pow(c1_3, 1.5) * 2
 
@@ -136,11 +136,6 @@ def _fast_expi_su3_frechet(q, t):
     f0 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h0), h0 / dd)
     f1 = jax.lax.select(jnp.isclose(dd, 0), jnp.full_like(h1, 1j), h1 / dd)
     f2 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h2), h2 / dd)
-
-    I = jnp.broadcast_to(jnp.eye(3), Q.shape)
-    expi = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f0), f0)[..., None, None]*I \
-                    + jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)[..., None, None]*Q \
-                    + jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)[..., None, None]*Q__2
 
     xi1 = (cos_w - sinc_w) / w__2
 
@@ -177,19 +172,23 @@ def _fast_expi_su3_frechet(q, t):
     b22 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b22), b22 / ddd)
     b22 = jax.lax.select(jnp.signbit(c0), -jnp.conjugate(b22), b22)
 
-
+    I = jnp.broadcast_to(jnp.eye(3), Q.shape)
     B1 = b10[..., None, None]*I + b11[..., None, None]*Q + b12[..., None, None]*Q__2
     B2 = b20[..., None, None]*I + b21[..., None, None]*Q + b22[..., None, None]*Q__2
     
-    QT = jnp.matmul(Q, T, precision=jax.lax.Precision.HIGHEST)
+    QT = jnp.matmul(Q, T)
 
     Tr1 = jnp.trace(QT, axis1=-2, axis2=-1)
-    Tr2 = jnp.einsum("...AB,...BA->...", Q__2, T, precision=jax.lax.Precision.HIGHEST)
+    Tr2 = jnp.einsum("...AB,...BA->...", Q__2, T)
+
+    expi = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f0), f0)[..., None, None]*I \
+                    + jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)[..., None, None]*Q \
+                    + jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)[..., None, None]*Q__2
 
     expi_frechet = Tr1[..., None, None]*B1 + Tr2[..., None, None]*B2 \
                     + jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)[..., None, None]*T \
                     + jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)[..., None, None] \
-                        *(jnp.matmul(T, Q, precision=jax.lax.Precision.HIGHEST) + QT)
+                        *(jnp.matmul(T, Q) + QT)
 
     return expi, expi_frechet
 
