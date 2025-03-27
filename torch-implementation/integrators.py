@@ -1,8 +1,6 @@
-from functools import partial
-
 import torch
 
-from special_unitary import FastExpiSU3
+from special_unitary import expi
 
 # Integrators here are from https://arxiv.org/pdf/hep-lat/0505020
 
@@ -12,13 +10,12 @@ def _torch_scan(f, init, length):
     for x in range(length):
         val, y = f(val, x)
         ys.append(y)
-    ys = torch.stack(ys)
     return val, ys
 
 def int_2LF(q0, p0, F_func, tau, steps_md):
     eps = tau / steps_md
 
-    T_operator = lambda q, p, coef: torch.matmul(FastExpiSU3.apply(coef * eps * p), q)
+    T_operator = lambda q, p, coef: torch.matmul(expi(coef * eps * p), q)
     V_operator = lambda q, p, coef: p - (coef * eps * F_func(q))
 
     def scan_fn(carry, _):
@@ -41,7 +38,7 @@ def int_2LF(q0, p0, F_func, tau, steps_md):
 def int_2MN(q0, p0, F_func, tau, steps_md, lambd=0.1931833275037836):
     eps = tau / steps_md
 
-    T_operator = lambda q, p, coef: torch.matmul(FastExpiSU3.apply(coef * eps * p), q)
+    T_operator = lambda q, p, coef: torch.matmul(expi(coef * eps * p), q)
     V_operator = lambda q, p, coef: p - (coef * eps * F_func(q))
 
     def scan_fn(carry, _):
@@ -66,7 +63,7 @@ def int_2MN(q0, p0, F_func, tau, steps_md, lambd=0.1931833275037836):
 def int_4MN4FP(q0, p0, F_func, tau, steps_md, rho=0.1786178958448091, theta=-0.06626458266981843, lambd=0.7123418310626056):
     eps = tau / steps_md
 
-    T_operator = lambda q, p, coef: torch.matmul(FastExpiSU3.apply(coef * eps * p), q)
+    T_operator = lambda q, p, coef: torch.matmul(expi(coef * eps * p), q)
     V_operator = lambda q, p, coef: p - (coef * eps * F_func(q))
 
     def scan_fn(carry, _):
@@ -95,7 +92,7 @@ def int_4MN4FP(q0, p0, F_func, tau, steps_md, rho=0.1786178958448091, theta=-0.0
 def int_4MN5FV(q0, p0, F_func, tau, steps_md, theta=0.08398315262876693, rho=0.2539785108410595, lambd=0.6822365335719091, mu=-0.03230286765269967):
     eps = tau / steps_md
 
-    T_operator = lambda q, p, coef: torch.matmul(FastExpiSU3.apply(coef * eps * p), q)
+    T_operator = lambda q, p, coef: torch.matmul(expi(coef * eps * p), q)
     V_operator = lambda q, p, coef: p - (coef * eps * F_func(q))
 
     def scan_fn(carry, _):

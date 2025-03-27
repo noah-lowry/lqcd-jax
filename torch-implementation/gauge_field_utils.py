@@ -42,7 +42,7 @@ def luscher_weisz_gauge_error(q0, p0, q1, p1, beta, u0):
     rect = torch.stack([_rect_mn(q1, mu, nu)-_rect_mn(q0, mu, nu) for mu in range(4) for nu in range(mu+1, 4)], dim=0).sum(dim=0)
     pgram = torch.stack([_pgram_mn(q1, mu, nu, rho)-_pgram_mn(q0, mu, nu, rho) for mu in range(4) for nu in range(mu+1, 4) for rho in range(nu+1, 4)], dim=0).sum(dim=0)
 
-    alpha_s = -1.303615*torch.log(u0)
+    alpha_s = -1.303615*np.log(u0)
 
     S_local = beta * (
         -plaq \
