@@ -18,7 +18,7 @@ def int_2LF(q0, p0, F_func, tau, steps_md):
         q, p = carry
 
         p = V_operator(q, p, 0.5)
-        q = T_operator(q, p, eps)
+        q = T_operator(q, p, 1.0)
         p = V_operator(q, p, 0.5)
 
         return (q, p), None
