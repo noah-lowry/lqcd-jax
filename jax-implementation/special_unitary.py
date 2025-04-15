@@ -48,58 +48,19 @@ def special_unitary_grad(func, N=3):
 
 @jax.custom_jvp
 @jax.jit
-def fast_expi_su3(q):
-    """Computes `exp(i qa*λa)` where `qa` are coefficients of the Gell-Mann matrices λa.\n
-    This implementation is much more efficient than using jax.scipy.linalg.expm."""
-
+def fast_expi(q):
     gmm = _make_generators(3)
-    q = jax.lax.complex(q.real, jnp.zeros_like(q.real))
-    Q = jnp.einsum("...N,Nij->...ij", q, gmm)
+    d_abc = np.real(np.einsum("Aij,Bjk,Cki->ABC", gmm, gmm, gmm) + np.einsum("Aij,Cjk,Bki", gmm, gmm, gmm))
+    c0, c1_3 = jnp.einsum("abc,...a,...b,...c->...", d_abc.real, q, q, q) / 6, jnp.einsum("...a,...a->...", q, q) / 12
+    f0, f1, f2 = _expi_coef_helper(c0, c1_3, False)
+    u0 = f0 + 2*c1_3*f2
+    ua = jnp.einsum("...,...a->...a", f1, q) + jnp.einsum("...,abc,...b,...c->...a", f2, d_abc, q, q)
+    expi = jnp.einsum("...,ij->...ij", u0, np.eye(3)) + jnp.einsum("...a,aij->...ij", ua, gmm)
+    return expi
 
-    Q__2 = jnp.matmul(Q, Q)
-
-    c0 = jnp.einsum("...AB,...BA->...", Q__2, Q).real / 3
-    c1_3 = jnp.trace(Q__2, axis1=-2, axis2=-1).real / 6
-    c0_max = jax.lax.pow(c1_3, 1.5) * 2
-
-    theta = jax.lax.acos(
-        jax.lax.select(
-            jnp.isclose(c0_max, 0), jnp.ones_like(c0_max), jax.lax.abs(c0) / c0_max
-        )  # Tr(Q^2) == 0 -> Tr(Q^3) == 0 (additionally, Tr(Q^2) == 0 -> Q == 0)
-    )
-    u__2 = c1_3 * jax.lax.cos(theta / 3)**2
-    w__2 = (c1_3 - u__2) * 3
-
-    u = jax.lax.sqrt(u__2)
-    w = jax.lax.sqrt(w__2)
-
-    cos_w = jax.lax.cos(w)
-    sinc_w = jnp.sinc(w / jnp.pi)
-    exp_miu = jax.lax.exp(-1j*u)
-    exp_2iu = 1 / (exp_miu * exp_miu)
-
-    h0 = (u__2 - w__2) * exp_2iu + exp_miu * (8*u__2*cos_w + 2j*u*(3*u__2 + w__2)*sinc_w)
-    h1 = 2*u*exp_2iu - exp_miu * (2*u*cos_w - 1j*(3*u__2 - w__2)*sinc_w)
-    h2 = exp_2iu - exp_miu * (cos_w + 3j*u*sinc_w)
-
-    dd = 9*u__2 - w__2
-
-    f0 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h0), h0 / dd)
-    f1 = jax.lax.select(jnp.isclose(dd, 0), jnp.full_like(h1, 1j), h1 / dd)
-    f2 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h2), h2 / dd)
-
-    f0 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f0), f0)
-    f1 = jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)
-    f2 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)
-
-    I = jnp.broadcast_to(jnp.eye(3), Q.shape)
-    result = f0[..., None, None]*I + f1[..., None, None]*Q + f2[..., None, None]*Q__2
-
-    return result
-
-@fast_expi_su3.defjvp
+@fast_expi.defjvp
 @jax.jit
-def _fast_expi_su3_frechet(q, t):
+def _fast_expi_frechet(q, t):
     q, = q
     t, = t
     q = jax.lax.complex(q.real, jnp.zeros_like(q.real))
@@ -111,86 +72,24 @@ def _fast_expi_su3_frechet(q, t):
     Q__2 = jnp.matmul(Q, Q)
     c0 = jnp.einsum("...AB,...BA->...", Q__2, Q).real / 3
     c1_3 = jnp.trace(Q__2, axis1=-2, axis2=-1).real / 6
-    c0_max = jax.lax.pow(c1_3, 1.5) * 2
 
-    theta = jax.lax.acos(
-        jax.lax.select(
-            jnp.isclose(c0_max, 0), jnp.ones_like(c0_max), jax.lax.abs(c0) / c0_max
-        )  # Tr(Q^2) == 0 -> Tr(Q^3) == 0 (additionally, Tr(Q^2) == 0 -> Q == 0)
-    )
-    u__2 = c1_3 * jax.lax.cos(theta / 3)**2
-    w__2 = (c1_3 - u__2) * 3
-
-    u = jax.lax.sqrt(u__2)
-    w = jax.lax.sqrt(w__2)
-
-    cos_w = jax.lax.cos(w)
-    sinc_w = jnp.sinc(w / jnp.pi)
-    exp_miu = jax.lax.exp(-1j*u)
-    exp_2iu = 1 / (exp_miu * exp_miu)
-
-    h0 = (u__2 - w__2) * exp_2iu + exp_miu * (8*u__2*cos_w + 2j*u*(3*u__2 + w__2)*sinc_w)
-    h1 = 2*u*exp_2iu - exp_miu * (2*u*cos_w - 1j*(3*u__2 - w__2)*sinc_w)
-    h2 = exp_2iu - exp_miu * (cos_w + 3j*u*sinc_w)
-
-    dd = 9*u__2 - w__2
-    
-    f0 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h0), h0 / dd)
-    f1 = jax.lax.select(jnp.isclose(dd, 0), jnp.full_like(h1, 1j), h1 / dd)
-    f2 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(h2), h2 / dd)
-
-    xi1 = (cos_w - sinc_w) / w__2
-
-    r01 = 2*(u+1j*(u__2-w__2))*exp_2iu + 2*exp_miu*(4*u*(2-1j*u)*cos_w + 1j*(9*u__2 + w__2 - 1j*u*(3*u__2+w__2))*sinc_w)
-    r11 = 2*(1+2j*u)*exp_2iu + exp_miu*(-2*(1-1j*u)*cos_w + 1j*(6*u+1j*(w__2-3*u__2))*sinc_w)
-    r21 = 2j*exp_2iu + 1j*exp_miu*(cos_w - 3*(1-1j*u)*sinc_w)
-    r02 = -2*exp_2iu + 2j*u*exp_miu*(cos_w + (1+4j*u)*sinc_w + 3*u__2*xi1)
-    r12 = -1j*exp_miu*(cos_w + (1+2j*u)*sinc_w - 3*u__2*xi1)
-    r22 = exp_miu*(sinc_w - 3j*u*xi1)
-    
-    ddd = 2*dd**2
-
-    b10 = (2*u*r01 + (3*u__2 - w__2)*r02 - 2*(15*u__2 + w__2)*f0)
-    b10 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b10), b10 / ddd)
-    b10 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(b10), b10)
-
-    b11 = (2*u*r11 + (3*u__2 - w__2)*r12 - 2*(15*u__2 + w__2)*f1)
-    b11 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b11), b11 / ddd)
-    b11 = jax.lax.select(jnp.signbit(c0), -jnp.conjugate(b11), b11)
-
-    b12 = (2*u*r21 + (3*u__2 - w__2)*r22 - 2*(15*u__2 + w__2)*f2)
-    b12 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b12), b12 / ddd)
-    b12 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(b12), b12)
-
-    b20 = (r01 - 3*u*r02 - 24*u*f0)
-    b20 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b20), b20 / ddd)
-    b20 = jax.lax.select(jnp.signbit(c0), -jnp.conjugate(b20), b20)
-
-    b21 = (r11 - 3*u*r12 - 24*u*f1)
-    b21 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b21), b21 / ddd)
-    b21 = jax.lax.select(jnp.signbit(c0), jnp.conjugate(b21), b21)
-
-    b22 = (r21 - 3*u*r22 - 24*u*f2)
-    b22 = jax.lax.select(jnp.isclose(dd, 0), jnp.ones_like(b22), b22 / ddd)
-    b22 = jax.lax.select(jnp.signbit(c0), -jnp.conjugate(b22), b22)
+    (f0, f1, f2), (b10, b11, b12), (b20, b21, b22) = _expi_coef_helper(c0, c1_3, True)
 
     I = jnp.broadcast_to(jnp.eye(3), Q.shape)
     B1 = b10[..., None, None]*I + b11[..., None, None]*Q + b12[..., None, None]*Q__2
     B2 = b20[..., None, None]*I + b21[..., None, None]*Q + b22[..., None, None]*Q__2
     
     QT = jnp.matmul(Q, T)
+    TQ = jnp.matmul(T, Q)
 
     Tr1 = jnp.trace(QT, axis1=-2, axis2=-1)
     Tr2 = jnp.einsum("...AB,...BA->...", Q__2, T)
 
-    expi = jax.lax.select(jnp.signbit(c0), jnp.conjugate(f0), f0)[..., None, None]*I \
-                    + jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)[..., None, None]*Q \
-                    + jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)[..., None, None]*Q__2
+    expi = f0[..., None, None]*I + f1[..., None, None]*Q + f2[..., None, None]*Q__2
+    expi = jax.lax.select(jnp.broadcast_to(jnp.isclose(c1_3, 0, atol=1e-5)[..., None, None], expi.shape), jnp.broadcast_to(jnp.eye(3, dtype=jnp.complex64), expi.shape), expi)
 
-    expi_frechet = Tr1[..., None, None]*B1 + Tr2[..., None, None]*B2 \
-                    + jax.lax.select(jnp.signbit(c0), -jnp.conjugate(f1), f1)[..., None, None]*T \
-                    + jax.lax.select(jnp.signbit(c0), jnp.conjugate(f2), f2)[..., None, None] \
-                        *(jnp.matmul(T, Q) + QT)
+    expi_frechet = Tr1[..., None, None]*B1 + Tr2[..., None, None]*B2 + f1[..., None, None]*T + f2[..., None, None]*(TQ + QT)
+    expi_frechet = jax.lax.select(jnp.broadcast_to(jnp.isclose(c1_3, 0, atol=1e-5)[..., None, None], expi_frechet.shape), 1j*T, expi_frechet)
 
     return expi, expi_frechet
 
@@ -238,6 +137,67 @@ def expi_H3_util(Q):
     result = f0[..., None, None]*I + f1[..., None, None]*Q + f2[..., None, None]*Q__2
 
     return result
+
+@partial(jax.jit, static_argnums=(2,))
+def _expi_coef_helper(c0, c1_3, compute_frechet=False):
+    c0_max = jax.lax.pow(c1_3, 1.5) * 2
+
+    sgn = jax.lax.sign(c0)
+    theta = jax.lax.acos(jax.lax.clamp(0.0, sgn * c0 / c0_max, 1.0))
+    u__2 = c1_3 * jax.lax.cos(theta / 3)**2
+    w__2 = (c1_3 - u__2) * 3
+
+    u = jax.lax.sqrt(u__2)
+    w = jax.lax.sqrt(w__2)
+
+    cos_w = jax.lax.cos(w)
+    sinc_w = jnp.sinc(w / jnp.pi)
+    exp_miu = jax.lax.exp(-1j*u)
+    exp_2iu = 1 / (exp_miu * exp_miu)
+
+    h0 = (u__2 - w__2) * exp_2iu + exp_miu * (8*u__2*cos_w + 2j*u*(3*u__2 + w__2)*sinc_w)
+    h1 = 2*u*exp_2iu - exp_miu * (2*u*cos_w - 1j*(3*u__2 - w__2)*sinc_w)
+    h2 = exp_2iu - exp_miu * (cos_w + 3j*u*sinc_w)
+
+    dd = 9*u__2 - w__2
+    
+    f0 = h0 / dd
+    f1 = h1 / dd
+    f2 = h2 / dd
+    
+    if compute_frechet:
+
+        xi1 = (cos_w - sinc_w) / w__2
+
+        r01 = 2*(u+1j*(u__2-w__2))*exp_2iu + 2*exp_miu*(4*u*(2-1j*u)*cos_w + 1j*(9*u__2 + w__2 - 1j*u*(3*u__2+w__2))*sinc_w)
+        r11 = 2*(1+2j*u)*exp_2iu + exp_miu*(-2*(1-1j*u)*cos_w + 1j*(6*u+1j*(w__2-3*u__2))*sinc_w)
+        r21 = 2j*exp_2iu + 1j*exp_miu*(cos_w - 3*(1-1j*u)*sinc_w)
+        r02 = -2*exp_2iu + 2j*u*exp_miu*(cos_w + (1+4j*u)*sinc_w + 3*u__2*xi1)
+        r12 = -1j*exp_miu*(cos_w + (1+2j*u)*sinc_w - 3*u__2*xi1)
+        r22 = exp_miu*(sinc_w - 3j*u*xi1)
+        
+        ddd = 2*dd**2
+
+        b10 = (2*u*r01 + (3*u__2 - w__2)*r02 - 2*(15*u__2 + w__2)*f0) / ddd
+        b11 = (2*u*r11 + (3*u__2 - w__2)*r12 - 2*(15*u__2 + w__2)*f1) / ddd
+        b12 = (2*u*r21 + (3*u__2 - w__2)*r22 - 2*(15*u__2 + w__2)*f2) / ddd
+        b20 = (r01 - 3*u*r02 - 24*u*f0) / ddd
+        b21 = (r11 - 3*u*r12 - 24*u*f1) / ddd
+        b22 = (r21 - 3*u*r22 - 24*u*f2) / ddd
+        
+    f0 = jax.lax.complex(f0.real, sgn*f0.imag)
+    f1 = jax.lax.complex(sgn*f1.real, f1.imag)
+    f2 = jax.lax.complex(f2.real, sgn*f2.imag)
+
+    if compute_frechet:
+        b10 = jax.lax.complex(b10.real, sgn*b10.imag)
+        b11 = jax.lax.complex(sgn*b11.real, b11.imag)
+        b12 = jax.lax.complex(b12.real, sgn*b12.imag)
+        b20 = jax.lax.complex(sgn*b20.real, b20.imag)
+        b21 = jax.lax.complex(b21.real, sgn*b21.imag)
+        b22 = jax.lax.complex(sgn*b22.real, b22.imag)
+
+    return ((f0, f1, f2), (b10, b11, b12), (b20, b21, b22)) if compute_frechet else (f0, f1, f2)
 
 @expi_H3_util.defjvp
 @jax.jit
